@@ -1,0 +1,57 @@
+name: Claude mention
+
+# Reusable workflow: answers @claude in issues, pull request comments and
+# reviews. The calling workflow decides who may trigger it (owners, members
+# and collaborators only on public repositories); the action also checks that
+# the person has write access. Claude's pushes go to pull request branches and
+# through the same checks and review as anyone's; it never merges.
+# Needs the Claude GitHub app on the repository and an ANTHROPIC_API_KEY
+# secret; without the key it skips with a notice.
+
+on:
+  workflow_call:
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  respond:
+    name: Claude
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: write
+      issues: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - name: Check for the API key
+        id: key
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -n "$ANTHROPIC_API_KEY" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::ANTHROPIC_API_KEY is not set, so Claude did not respond."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out source
+        if: steps.key.outputs.available == 'true'
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 1
+
+      - name: Respond
+        if: steps.key.outputs.available == 'true'
+        uses: anthropics/claude-code-action@4411a9e9b0283becf4b924f7bce360fd7756c78c # v1.0.290
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: >-
+            --max-turns 30
+            --append-system-prompt "Follow the repository's AGENTS.md and CLAUDE.md. Never merge, approve, push to main, dev or staging, or include secrets, personal data or patient data in a comment or commit."

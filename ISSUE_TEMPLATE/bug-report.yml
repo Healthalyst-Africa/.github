@@ -1,0 +1,57 @@
+name: Bug report
+description: Something does not work as it should.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting. Never include patient records, personal details, credentials or tokens; use test accounts and describe data by type.
+        Security problems must be reported privately through the Security tab instead.
+  - type: input
+    id: application
+    attributes:
+      label: Application and address
+      description: Where did it happen?
+      placeholder: HealthSchedule, https://healthschedule.healthalystafrica.com/queue
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Sign in as a front desk user
+        2. Open the queue
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead
+      description: Include error messages and screenshots with personal details hidden.
+    validations:
+      required: true
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact
+      options:
+        - Blocks work for everyone
+        - Blocks work for some users
+        - Has a workaround
+        - Cosmetic
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Device and browser
+      placeholder: Android phone, Chrome
