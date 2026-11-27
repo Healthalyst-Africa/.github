@@ -34,9 +34,32 @@ jobs:
 ```
 
 Pin the reference to a full commit SHA with a version comment, as for any
-other action. Both workflows skip with a notice when `ANTHROPIC_API_KEY` is
-not set. They also need the [Claude GitHub app](https://github.com/apps/claude)
-installed on the repository.
+other action. Both workflows also need the
+[Claude GitHub app](https://github.com/apps/claude) installed on the
+repository.
+
+When `ANTHROPIC_API_KEY` is not set, `claude-mention.yml` skips with a notice,
+and `claude-code-review.yml` becomes a **manual review gate**. Its check fails
+until either:
+
+- the pull request description's **Manual review** section has its box ticked
+  and the findings written, or
+- someone other than the author approves the latest commit.
+
+Make the `review / Claude review` check required in the rulesets so nothing
+merges unreviewed. So that ticking the box or approving re-runs the check, the
+caller must also trigger on these events:
+
+```yaml
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened, edited]
+  pull_request_review:
+    types: [submitted, dismissed]
+```
+
+Pass `require_manual_review: false` under `with:` to keep the old behaviour,
+which skips with a notice.
 
 ## Changing this repository
 

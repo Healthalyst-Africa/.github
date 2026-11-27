@@ -4,10 +4,25 @@ name: Claude code review
 # code-review plugin and the repository's REVIEW.md, and posts inline
 # comments. It never approves or requests changes; a person decides.
 # Needs the Claude GitHub app on the repository and an ANTHROPIC_API_KEY
-# secret; without the key it skips with a notice.
+# secret.
+#
+# Without the key, the check becomes a manual review gate (unless the caller
+# sets require_manual_review to false). It passes only when either:
+#   - the pull request description has a "Manual review" section with the
+#     box ticked and the findings written down, or
+#   - someone other than the author approved the latest commit.
+# Make this check required in the rulesets so nothing merges unreviewed.
+# Callers must also trigger on pull_request "edited" and on
+# pull_request_review "submitted", so ticking the box or approving re-runs it.
 
 on:
   workflow_call:
+    inputs:
+      require_manual_review:
+        description: Fail the check without the API key until a person has reviewed the change.
+        type: boolean
+        required: false
+        default: true
     secrets:
       ANTHROPIC_API_KEY:
         required: false
@@ -30,23 +45,114 @@ jobs:
         id: key
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
         run: |
           if [ -n "$ANTHROPIC_API_KEY" ]; then
             echo "available=true" >> "$GITHUB_OUTPUT"
+            # Editing the description or submitting a review does not change
+            # the code, so Claude reviews only on code and readiness events.
+            if [ "$EVENT_NAME" = "pull_request" ] && [ "$EVENT_ACTION" != "edited" ]; then
+              echo "review=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "review=false" >> "$GITHUB_OUTPUT"
+            fi
           else
-            echo "::notice::ANTHROPIC_API_KEY is not set, so Claude did not review this pull request."
             echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "review=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Require a manual review
+        if: steps.key.outputs.available != 'true' && inputs.require_manual_review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # The description is read live, not from the event, so a re-run
+          # after ticking the box sees the current text.
+          gh api "repos/${REPOSITORY}/pulls/${PULL_REQUEST_NUMBER}" > pull-request.json
+          gh api --paginate --slurp "repos/${REPOSITORY}/pulls/${PULL_REQUEST_NUMBER}/reviews" > reviews.json
+          node --input-type=module <<'SCRIPT'
+          import { appendFileSync, readFileSync } from "node:fs";
+
+          const pullRequest = JSON.parse(readFileSync("pull-request.json", "utf8"));
+          const reviews = JSON.parse(readFileSync("reviews.json", "utf8")).flat();
+          const author = pullRequest.user.login;
+          const headCommit = pullRequest.head.sha;
+
+          const independentApproval = reviews.find(
+            (review) =>
+              review.state === "APPROVED" &&
+              review.commit_id === headCommit &&
+              review.user?.login !== author
+          );
+
+          const description = (pullRequest.body ?? "").replace(/<!--[\s\S]*?-->/g, "");
+          const sectionMatch = description.match(/^##\s+Manual review\s*$([\s\S]*?)(?=^##\s|(?![\s\S]))/im);
+          const section = sectionMatch ? sectionMatch[1] : "";
+          const attested = /^\s*[-*]\s+\[[xX]\]\s+I reviewed this change/m.test(section);
+          const findings = section
+            .split("\n")
+            .filter((line) => !/^\s*[-*]\s+\[[ xX]\]/.test(line))
+            .join("\n")
+            .replace(/^\s*Findings:\s*/im, "")
+            .trim();
+          const recorded = attested && findings.length >= 10;
+
+          const summary = (text) =>
+            appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${text}\n`);
+
+          if (independentApproval) {
+            summary(`Claude review is not set up. @${independentApproval.user.login} approved the latest commit, which counts as the manual review.`);
+            console.log("Manual review gate: passed by an independent approval.");
+          } else if (recorded) {
+            summary("Claude review is not set up. The author recorded a manual review in the pull request description.");
+            console.log("Manual review gate: passed by the recorded manual review.");
+          } else {
+            const missing = !sectionMatch
+              ? 'the description has no "## Manual review" section'
+              : !attested
+                ? "the manual review box is not ticked"
+                : "no findings are written under the box";
+            summary([
+              "## Manual review needed",
+              "",
+              "ANTHROPIC_API_KEY is not set, so Claude did not review this pull request, and a person must.",
+              `This check fails because ${missing}.`,
+              "",
+              "Do one of these, then the check runs again on its own:",
+              "",
+              '1. Review the diff against `REVIEW.md` (bug, security and policy passes), or run `/healthalyst-sdlc:verify-change` and the `security-reviewer` agent locally. Then add this to the description, tick the box and write what you found, even "No Important findings":',
+              "",
+              "   ```markdown",
+              "   ## Manual review",
+              "",
+              "   - [x] I reviewed this change against REVIEW.md and recorded the findings below.",
+              "",
+              "   Findings: ...",
+              "   ```",
+              "",
+              "2. Ask someone other than the author to approve the latest commit.",
+            ].join("\n"));
+            console.log(`::error title=Manual review needed::Claude review is not set up and ${missing}. See the job summary for how to pass.`);
+            process.exit(1);
+          }
+          SCRIPT
+
+      - name: Note the skipped review
+        if: steps.key.outputs.available != 'true' && !inputs.require_manual_review
+        run: echo "::notice::ANTHROPIC_API_KEY is not set, so Claude did not review this pull request."
+
       - name: Check out source
-        if: steps.key.outputs.available == 'true'
+        if: steps.key.outputs.review == 'true'
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 1
           persist-credentials: false
 
       - name: Review
-        if: steps.key.outputs.available == 'true'
+        if: steps.key.outputs.review == 'true'
         uses: anthropics/claude-code-action@4411a9e9b0283becf4b924f7bce360fd7756c78c # v1.0.290
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}

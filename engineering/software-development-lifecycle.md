@@ -104,6 +104,11 @@ stage 3 with no change record; the pull request explains them.
   Its comments inform; a code owner approves. With a single developer, the
   administrator bypass is used and recorded; a second reviewer replaces it
   as soon as the team grows.
+- Until the Anthropic API key is in place, the `Claude review` check is a
+  manual review gate. It fails until the author ticks the **Manual review**
+  box in the pull request and writes the findings, or until someone other
+  than the author approves the latest commit. Review against `REVIEW.md`, or
+  run `/healthalyst-sdlc:verify-change` and the `security-reviewer` agent.
 - Before merging `dev` into `main`, run `/healthalyst-sdlc:prepare-release`.
   Each push to `main` creates a release record, which is the deployment
   history.
@@ -174,4 +179,5 @@ Start with what needs nothing else, then add the rest:
    [repository standard](repository-standard.md)).
 4. Intents and specifications for new features.
 5. Claude review, agent evals, CI health and delivery metrics once an
-   Anthropic API key is in place.
+   Anthropic API key is in place. Until then, Claude review runs as a manual
+   review gate.
